@@ -83,13 +83,13 @@ def main():
         # Split data into train and test set
         n = obs_data.shape[0]
         obs_data, act_data = shuffle(obs_data, act_data, random_state=0)
-        split_val = int(n*0.8)
+        split_val = int(n*0.8) # 80/20 train test split
         X_train = obs_data[:split_val]
         X_test = obs_data[split_val:]
         Y_train = act_data[:split_val]
         Y_test = act_data[split_val:]
         sess.run(init)
-        for i in range(3):
+        for i in range(3): # 3 epochs b/c I have a shit machine
             print('epoch: '+str(i))
             mini_batch_sz = 256
             mini_batches = [[np.array(X_train[j:j+n]), np.array(Y_train[j:j+n])] \
