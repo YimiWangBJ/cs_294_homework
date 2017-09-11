@@ -131,7 +131,7 @@ def learn(env,
     # YOUR CODE HERE
     Q = q_func(obs_t_float, num_actions, scope="q_func", reuse=False)
     q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='q_func')
-    Q_action = tf.gather(tf.transpose(Q), act_t_ph)
+    Q_action = tf.reduce_sum(tf.one_hot(act_t_ph, depth=num_actions, dtype=tf.float32) * Q, axis=1)
 
     Q_next = q_func(obs_tp1_float, num_actions, scope="target_q_func", reuse=False)
     target_q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="target_q_func")
