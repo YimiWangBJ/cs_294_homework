@@ -77,6 +77,7 @@ def learn(env,
     assert type(env.observation_space) == gym.spaces.Box
     assert type(env.action_space)      == gym.spaces.Discrete
 
+
     ###############
     # BUILD MODEL #
     ###############
@@ -128,8 +129,15 @@ def learn(env,
     ######
     
     # YOUR CODE HERE
+    Q = q_func(obs_t_float, num_actions, scope="q_func", reuse=False)
+    q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='q_func')
+    Q_action = tf.reduce_sum(tf.one_hot(act_t_ph, depth=num_actions, dtype=tf.float32) * Q, axis=1)
 
-    ######
+    Q_next = q_func(obs_tp1_float, num_actions, scope="target_q_func", reuse=False)
+    target_q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="target_q_func")
+    Q_next_action = rew_t_ph + gamma * tf.reduce_max(Q_next, axis=1)
+
+    total_error = tf.square(Q_next_action - Q_action)
 
     # construct optimization op (with gradient clipping)
     learning_rate = tf.placeholder(tf.float32, (), name="learning_rate")
@@ -156,6 +164,13 @@ def learn(env,
     best_mean_episode_reward = -float('inf')
     last_obs = env.reset()
     LOG_EVERY_N_STEPS = 10000
+
+    saver = tf.train.Saver()
+    try:
+        last_checkpoint = tf.train.last_checkpoint('models/')
+        saver.restore(session, last_checkpoint)
+    except:
+        print('No checkpoints loaded from models/')
 
     for t in itertools.count():
         ### 1. Check stopping criterion
@@ -196,6 +211,24 @@ def learn(env,
         
         # YOUR CODE HERE
 
+        i = replay_buffer.store_frame(last_obs)
+
+        epsilon = exploration.value(t)
+       
+        if not model_initialized or random.random() < epsilon:
+            action = env.action_space.sample()
+        else:
+            input_batch = replay_buffer.encode_recent_observation()
+            Q_vals = session.run(Q, {obs_t_ph: [input_batch]})
+            action = np.argmax(Q_vals)
+
+        last_obs, reward, done, info = env.step(action)
+        replay_buffer.store_effect(i, action, reward, done)
+
+        if done == True: 
+            last_obs = env.reset() 
+            done = False 
+
         #####
 
         # at this point, the environment should have been advanced one step (and
@@ -204,6 +237,7 @@ def learn(env,
 
         ### 3. Perform experience replay and train the network.
         # note that this is only done if the replay buffer contains enough samples
+
         # for us to learn something useful -- until then, the model will not be
         # initialized and random actions should be taken
         if (t > learning_starts and
@@ -217,10 +251,10 @@ def learn(env,
             # 3.b: initialize the model if it has not been initialized yet; to do
             # that, call
             #    initialize_interdependent_variables(session, tf.global_variables(), {
-            #        obs_t_ph: obs_t_batch,
-            #        obs_tp1_ph: obs_tp1_batch,
+            #        obs_t_ph: batch_obs_t,
+            #        obs_tp1_ph: batch_obs_tp1,
             #    })
-            # where obs_t_batch and obs_tp1_batch are the batches of observations at
+            # where batch_obs_t and batch_obs_tp1 are the batches of observations at
             # the current and next time step. The boolean variable model_initialized
             # indicates whether or not the model has been initialized.
             # Remember that you have to update the target network too (see 3.d)!
@@ -245,15 +279,31 @@ def learn(env,
             #####
             
             # YOUR CODE HERE
+            batch_obs_t, batch_act, batch_r, batch_obs_tp1, done_mask = replay_buffer.sample(batch_size)
 
+            if not model_initialized:
+                initialize_interdependent_variables(session, tf.global_variables(), {
+                   obs_t_ph: batch_obs_t,
+                   obs_tp1_ph: batch_obs_tp1,
+                })    
+                session.run(update_target_fn)
+                model_initialized = True
+            session.run(train_fn, {obs_t_ph: batch_obs_t, act_t_ph: batch_act, rew_t_ph: batch_r, obs_tp1_ph: batch_obs_tp1,
+                done_mask_ph: done_mask, learning_rate: optimizer_spec.lr_schedule.value(t)})
+
+            if t % target_update_freq == 0:
+                session.run(update_target_fn)
+                num_param_updates += 1
             #####
 
         ### 4. Log progress
         episode_rewards = get_wrapper_by_name(env, "Monitor").get_episode_rewards()
         if len(episode_rewards) > 0:
             mean_episode_reward = np.mean(episode_rewards[-100:])
+            
         if len(episode_rewards) > 100:
             best_mean_episode_reward = max(best_mean_episode_reward, mean_episode_reward)
+
         if t % LOG_EVERY_N_STEPS == 0 and model_initialized:
             print("Timestep %d" % (t,))
             print("mean reward (100 episodes) %f" % mean_episode_reward)
@@ -262,3 +312,5 @@ def learn(env,
             print("exploration %f" % exploration.value(t))
             print("learning_rate %f" % optimizer_spec.lr_schedule.value(t))
             sys.stdout.flush()
+
+            saver.save(session, 'models/dqn', global_step=t)
